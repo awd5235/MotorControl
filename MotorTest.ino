@@ -63,7 +63,17 @@
   4. If so, then poll output
   5. Otherwise, skip it and do something else.
   --------------------------------------------------------------------------------------------------
- 
+
+
+
+  ------------------------------------------- TO DO ------------------------------------------------
+  1. Add LCD using PORTD
+  2. Port manipulation of POT (BONUS: replace pot with light sensor)
+  3. Port manipulation of Servos
+  4. Add alarm for 180 degrees
+  5. Implement using interrupts
+  6. Add stepper?
+  --------------------------------------------------------------------------------------------------
 ====================================================================================================*/
 
 #include <Servo.h>
@@ -96,9 +106,9 @@ void setup() {
   tall_servo.write(0);                 // Alternatively "tall_servo.writeMicroseconds(1000);" to initialize at 0 degrees
 
   // Switch setup
-  DDRD &= B00000011;                   // Set digital pins 2-7 as inputs, leave pins 0 and 1 alone since these are used for programming the arduino
-  PORTD |= B00001100;                  // Set pull-ups on digital pins 2 and 3 leaving the rest of the pins alone.
-  // NOTE active low logic. Switch open: pins 2 and 3 are set. Switch closed: pins 2 and 3 cleared.
+  DDRB &= B11100111;                   // Set digital pins 11 and 12 as inputs for the hardware switches, leave others unchanged as they are set elsewhere
+  PORTB |= B00011000;                  // Set pull-ups on digital pins 11 and 12 leaving the rest of the pins unchanged.
+  // NOTE active low logic. Switch open: pins 11 and 12 are set. Switch closed: pins 11 and 12 cleared.
 
   //Serial.begin(9600);                  // For testing purposes
 }
@@ -107,12 +117,12 @@ void setup() {
 void loop(){
 
   // Change state based on switch inputs
-  //  1. Read Port D Pins (PIND)
+  //  1. Read Port B Pins (PINB)
   //  2. Invert them for active high logic (~)
-  //  3. Single out digital pins 2 and 3 which are connected to the hardware switches and ignore others as they contain nothing important. (& B00001100)
-  //  4. Shift right twice to place the bits we care about in the LSB position (>> 2)
+  //  3. Single out digital pins 11 and 12 which are connected to the hardware switches and ignore others as they are not important now. (& B00011000)
+  //  4. Shift right three times to place the bits we care about in the LSB position (>> 3)
   //  5. FSMstate now holds an integer value between 0 and 3
-  FSMstate = (~PIND & B00001100) >> 2;
+  FSMstate = (~PINB & B00011000) >> 3;
   
   // Switch to different cases based on the value of the current state (FSMstate)
   // FSMstate = 0, case 0: no motors are selected, potentiometer has no effect, screen displays "00"
