@@ -164,7 +164,8 @@ void loop(){
   switch (FSMstate)
   {
     case 0:  // No motors, no need to calculate elapsed time or read potentiometer position
-    
+      line1 = "No motors";
+      LCD4BitPrintLn(line1);
       break;
       
     case 1:  // Small Servo only
@@ -209,32 +210,21 @@ void loop(){
   }
 }
 
-void LCDprint(String line)
+void LCD4BitPrintLn(String line)
 {
-  for(int i=0; line[i] != '\0'; i++)
-  {
-    LCDwriteDAT(line[i]);
-  }
- 
- LCDwriteCMD(0x02); 
+  for(int i=0; line[i] != '\0'; i++)  // For each element in the string up until '\0' (All strings end with '\0'):
+    LCD4BitWriteByte(1, line[i]);     //    Write the character data byte to the LCD
+  LCD4BitWriteByte(0,0x02);           // Send the cursor home command so next write can start at the beginning of the line
 }
-
-// LCD COMMANDS
-//    "Function Set"        : 0x001WLDXX, where W = width (4 vs 8 bit), L = lines ( 1 vs 2), and D = dots (5x7 vs 5x10). X = don't care
-//    "Display Control"     : 0x00001DCB, where D = Display (off vs on), C = cursor (off vs on), B = blink (off vs on)
-//    "Display clear"       : 0x00000001, Clears the display and returns the cursor to address 0. No levers associated with this command
-//    "Cursor Home"         : 0x0000001X, where X = don't care. Returns cursor home and shifted display to original position
-//    "Entry mode"          : 0x000001CS, where C = cursor move (decrement vs increment), S = shift display (off vs on) 
-//    "Cursor Control"      : 0x0001MDXX, where M = move (cursor move vs display move), D = direction (left vs right)   
+ 
 void LCDinit4bit()          // Initialize the LCD screen in 4-bit mode
 {
   LCDreset();               // 1. Reset LCD into 4-bit mode
-  LCDwriteCMD(0x28);        // 2. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
-  LCDwriteCMD(0x08);        // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
-  LCDwriteCMD(0x01);        // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
-  LCDwriteCMD(0x06);        // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
-  LCDwriteCMD(0x0F);        // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
-  LCDwriteDAT(0x41);
+  LCD4BitWriteByte(0,0x28);        // 2. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
+  LCD4BitWriteByte(0,0x08);        // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
+  LCD4BitWriteByte(0,0x01);        // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
+  LCD4BitWriteByte(0,0x06);        // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
+  LCD4BitWriteByte(0,0x0F);        // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
 }
 
 void LCDreset()             // Reset LCD into 4-bit mode. Only needs to be called once at start up. 
@@ -262,31 +252,16 @@ void LCDreset()             // Reset LCD into 4-bit mode. Only needs to be calle
   PORTB &= B11101111;       // 18. En=0. Command is sent on trailing edge of enable
   _delay_us(150);           // 19. Wait >100us for command to process
   // At this point LCD is reset and listening for 4-bit commands.
-  // NOTE: PORTD buffer is still set to 0x2, must be cleared before it can be used correctly again
 }
 
-void LCDwriteCMD(byte CMD)                // Write a command byte to the LCD one nibble at a time using 4 bit mode.
+void LCD4BitWriteByte(bool RS, byte BITE)  // Write either a command (Rs=0) or data (Rs=1) byte to the LCD one nibble at a time using 4 bit mode.
 {
-  byte upperNibble = CMD & 0xF0;          // 01. Mask upper nibble of CMD, clear lower nibble so result takes the form: 0xUUUU0000
-  byte lowerNibble = (CMD & 0x0F) << 4;   // 02. Mask lower nibble of CMD, clear upper nibble then shift left 4 so result takes the form 0xLLLL0000
-  PORTB &= B11110111;                     // 03. Rs = 0 for all writes in this function since we are writing instructions not data
-  PORTD &= B00001111;                     // 04. Clear LCD buffer
-  PORTD |= upperNibble;                   // 05. Write upperNibble to LCD buffer
-  PORTB |= B00010000;                     // 06. En=1
-  PORTB &= B11101111;                     // 07. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 08. Wait >40us for command to process
-  PORTD &= B00001111;                     // 09. Clear LCD buffer
-  PORTD |= lowerNibble;                   // 10. Write lowerNibble to LCD buffer
-  PORTB |= B00010000;                     // 11. En=1
-  PORTB &= B11101111;                     // 12. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 13. Wait >40us for command to process
-}
-
-void LCDwriteDAT(byte DAT)                // Write a data byte to the LCD one nibble at a time using 4 bit mode.
-{
-  byte upperNibble = DAT & 0xF0;          // 01. Mask upper nibble of DAT, clear lower nibble so result takes the form: 0xUUUU0000
-  byte lowerNibble = (DAT & 0x0F) << 4;   // 02. Mask lower nibble of DAT, clear upper nibble then shift left 4 so result takes the form 0xLLLL0000
-  PORTB |= B00001000;                     // 03. Rs = 1 for all writes in this function since we are writing data not instructions
+  byte upperNibble = BITE & 0xF0;         // 01. Mask upper nibble of BITE, clear lower nibble so result takes the form: 0xUUUU0000
+  byte lowerNibble = (BITE & 0x0F) << 4;  // 02. Mask lower nibble of BITE, clear upper nibble then shift left 4 so result takes the form 0xLLLL0000
+  if(RS)                                  // 03. Evaluate the passed value of RS
+    PORTB |= B00001000;                   //     If 1 : Set Register select bit to write data
+  else  
+    PORTB &= B11110111;                   //     If 0 : Clear Register select bit to write command
   PORTD &= B00001111;                     // 04. Clear LCD buffer
   PORTD |= upperNibble;                   // 05. Write upperNibble to LCD buffer
   PORTB |= B00010000;                     // 06. En=1
