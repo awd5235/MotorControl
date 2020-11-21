@@ -12,19 +12,20 @@
 
 
 
-  ------------------------------------------ About PORTD -------------------------------------------
+  ------------------------------------------ About PORT X -------------------------------------------
   Port manipulation allows for the simultaneous manipulation of digital pins. It is faster, but less readable and less transferrable.
-  Port D controls pins 0-7 with LSB corresponding to pin 0 and MSB corresponding to pin 7.
+  There are three ports available PORT A (analog 0-5), PORT B (Digital 8-13), and PORTD (digital 0-7)
+  The LSB of each port corresponds to lowest controlled pin and MSB corresponds to the highest controlled pin. (e.g. PORTD LSB = pin0, MSB = pin7)
   
   Controlled by 3 registers:
-  -DDRD:  (R/W) Data direction register D which specifies whether the pins are INPUT (default, hi-z) or OUTPUT (low-z). Always set this reg first!
-          Write 0 to set as input, write 1 to set as output
+  -DDRX:  (R/W) Data direction register D which specifies whether the pins are INPUT (default, hi-z) or OUTPUT (low-z). Always set this reg first!
+          0 = input, 1 = output
           The low level equivalent of pinMode()
-  -PORTD: (R/W) Uses internal pull-ups to set the logic state of pins HIGH or LOW. 
+  -PORTX: (R/W) Uses internal pull-ups to set the logic state of pins HIGH or LOW. 
           When configured OUTPUT, think of it as setting state HIGH/LOW. When configured INPUT think of it as setting the pull-up.
           Write 0 to set LOW/disable pull-up, write 1 to set HIGH/enable pull-up.
           The low level equivalent of digitalWrite(), see also bitWrite()
-  -PIND:  (R) Reads the state of input pins
+  -PINX:  (R) Reads the state of input pins
           The low level equivalent of digitalRead()
   
   NOTE: PORT D Digital pins 0 and 1 are used for serial comm and programming Arduino. Avoid using these!!!
@@ -43,16 +44,21 @@
     1ms pulse -> 0 degrees
     1.5ms pulse -> 90 degrees
     2ms pulse -> 180 degrees
+
+  This project uses Motor Shield V1.2
+    "SER1" header -> PWM1B -> Controlled by Uno Pin 10
+    "SERVO_2" header -> PWM1A -> Controlled Uno Pin 9
   --------------------------------------------------------------------------------------------------
 
+  ------------------------------------- About Interrupts -------------------------------------------
+  Arduino Uno only has interrupts on pins 2 (INT.0) & 3 (INT0.1)
+  millis(), micros(), and delay() do not work in ISR. delayMicroseconds() will work
+  To share data between ISR and main declare global variables as volatile
 
-
-  ------------------------------------- About Motor Shield V1.2-------------------------------------
-  "SER1" header -> PWM1B -> Controlled by Uno Pin 10
-  "SERVO_2" header -> PWM1A -> Controlled Uno Pin 9
+  For this porject:
+  Dipswitch 0 = pin 2 -> INT.0
+  Dipswitch 1 = pin 3 -> INT.1
   --------------------------------------------------------------------------------------------------
-
-
 
   -------------------------------- Non-blocking Polling Algorithm ----------------------------------
   Delay() is a blocking process which doesn't allow for any other processing while it waits.
@@ -68,13 +74,13 @@
   ------------------------------------------- About LCD --------------------------------------------
   2x16 Character LCD.
   
-  For this project configure LCD in 4-bit mode using Port D
-    Digital Pin 2 = Register Select  : 0 = command, 1 = data
-    Digital Pin 3 = Enable           : Command/Data sent on trailing edge. Keep low, Set, then clear to write. 
-    Digital Pin 4 = D4               : LSB
-    Digital Pin 5 = D5               :
-    Digital Pin 6 = D6               :
-    Digital Pin 7 = D7               : MSB
+  For this project configure LCD in 4-bit mode using Port D 
+    Digital Pin 04 = D4               : LCD buffer LSB
+    Digital Pin 05 = D5               :
+    Digital Pin 06 = D6               :
+    Digital Pin 07 = D7               : LCD buffer MSB
+    Digital Pin 11 = Register Select  : 0 = command, 1 = data
+    Digital Pin 12 = Enable           : Command/Data sent on trailing edge. Keep low, Set, then clear to write.
   
   LCD COMMANDS
     "Function Set"        : 0x001WLDXX, where W = width (4 vs 8 bit), L = lines ( 1 vs 2), and D = dots (5x7 vs 5x10). X = don't care
@@ -86,11 +92,16 @@
   --------------------------------------------------------------------------------------------------
   
   ------------------------------------------- TO DO ------------------------------------------------
-  2. Port manipulation of POT (BONUS: replace pot with light sensor)
+  1. Print state to LCD (best way to buffer/refresh/print quickly?)
+  2. Interrupt driven FSM (Without reevaluating state every loop single)
   3. Port manipulation of Servos
   4. Add alarm for 180 degrees
-  5. Implement using interrupts
-  6. Add stepper?
+
+
+  BONUS
+    1. Replace pot with light sensor
+    2. Roll your own LCD lib
+    3. Roll your own servo lib 
   --------------------------------------------------------------------------------------------------
 ====================================================================================================*/
 
@@ -127,25 +138,23 @@ void setup() {
   tall_servo.write(0);                  // Alternatively "tall_servo.writeMicroseconds(1000);" to initialize at 0 degrees
 
   // Switch setup
-  DDRB &= B11100111;                    // Set digital pins 11 and 12 as inputs for the hardware switches, leave others unchanged as they are set elsewhere
-  PORTB |= B00011000;                   // Set pull-ups on digital pins 11 and 12 leaving the rest of the pins unchanged.
-  // NOTE active low logic. Switch open: pins 11 and 12 are set. Switch closed: pins 11 and 12 cleared.
+  DDRD &= B11110011;                    // Configure digital pins 2 and 3 as inputs for the hardware switches. leave others unchanged as they are used elsewhere
+  PORTD |= B00001100;                   // Set pull-ups on digital pins 2 and 3
+  // NOTE active low logic. Switch open: pins 2 and 3 are set. Switch closed: pins 2 and 3 cleared.
 
   // LCD Setup
-  DDRD |= B11111100;                    // Initialize digital pins 7-2 as outputs for the LCD screen, leave 1,0 unchanged as they are used for serial/programming
-  _delay_ms(100);                           // Wait >40ms for Led Vcc to rise to the correct voltage
   LCDinit4bit();                        // Initialize LCD in 4-bit mode
 }
 
 
 void loop(){
   // Change state based on switch inputs
-  //  1. Read Port B Pins (PINB)
+  //  1. Read Port D Pins (PIND)
   //  2. Invert them for active high logic (~)
-  //  3. Single out digital pins 11 and 12 which are connected to the hardware switches and ignore others as they are not important now. (& B00011000)
-  //  4. Shift right three times to place the bits we care about in the LSB position (>> 3)
+  //  3. Single out digital pins 2 and 3 which are connected to the hardware switches and ignore others as they are not important now. (& B00001100)
+  //  4. Shift right two times to place the bits we care about in the LSB position (>> 2)
   //  5. FSMstate now holds an integer value between 0 and 3
-  FSMstate = (~PINB & B00011000) >> 3;
+  FSMstate = (~PIND & B00001100) >> 2;
   
   // Switch to different cases based on the value of the current state (FSMstate)
   // FSMstate = 0, case 0: no motors are selected, potentiometer has no effect, screen displays "--"
@@ -200,14 +209,6 @@ void loop(){
   }
 }
 
-/*
-void LCDwriteString(char message[])
-{
-  LCDwriteCMD(0x01);          // "Display clear" command (0x01) : Clears the display and returns the cursor to address 0
-  LCDwriteDAT(message[0]);
-}
-*/
-
 void LCDprint(String line)
 {
   for(int i=0; line[i] != '\0'; i++)
@@ -224,67 +225,76 @@ void LCDprint(String line)
 //    "Display clear"       : 0x00000001, Clears the display and returns the cursor to address 0. No levers associated with this command
 //    "Cursor Home"         : 0x0000001X, where X = don't care. Returns cursor home and shifted display to original position
 //    "Entry mode"          : 0x000001CS, where C = cursor move (decrement vs increment), S = shift display (off vs on) 
-//    "Cursor Control"      : 0x0001MDXX, where M = move (cursor move vs display move), D = direction (left vs right)
-    
-void LCDinit4bit()      // Initialize the LCD screen in 4-bit mode
+//    "Cursor Control"      : 0x0001MDXX, where M = move (cursor move vs display move), D = direction (left vs right)   
+void LCDinit4bit()          // Initialize the LCD screen in 4-bit mode
 {
-  LCDreset();           // 1. Reset LCD into 4-bit mode
-  LCDwriteCMD(0x28);    // 2. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
-  LCDwriteCMD(0x08);    // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
-  LCDwriteCMD(0x01);    // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
-  LCDwriteCMD(0x06);    // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
-  LCDwriteCMD(0x0F);    // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
+  LCDreset();               // 1. Reset LCD into 4-bit mode
+  LCDwriteCMD(0x28);        // 2. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
+  LCDwriteCMD(0x08);        // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
+  LCDwriteCMD(0x01);        // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
+  LCDwriteCMD(0x06);        // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
+  LCDwriteCMD(0x0F);        // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
+  LCDwriteDAT(0x41);
 }
 
 void LCDreset()             // Reset LCD into 4-bit mode. Only needs to be called once at start up. 
 { 
+  // Port Set up
+  DDRD |= B11110000;        // 01. Initialize digital pins 7-4 as outputs for the LCD buffer, leave others unchanged as they are used elsewhere
+  PORTD &= B00001111;       // 02. Clear D7-D4 to 0 as a neutral starting point
+  DDRB |= B00011000;        // 03. Initialize digital pins 12 (En) and 11 (Rs) as outputs for the LCD control
+  PORTB &= B11100111;       // 04. Clear En, Rs to 0 as a neutral starting point
+  
   // Data sheet calls this initialization by instruction. Send 0x3 three times, then 0x2 to reset into 4-bit mode.
-  PORTD &= B00000011;       // 01. Clear D7-D4, En, RS (digital pins 7-2, respectively) to 0 as a neutral starting point, leave pins 1,0 unchanged
-  PORTD |= B00111000;       // 02. Write upper nibble 0x3, En=1
-  PORTD &= B11110111;       // 03. En=0. Command is sent on trailing edge of enable
-  _delay_ms(5);             // 04. Wait >4.1ms for command to process
-  PORTD |= B00111000;       // 05. Write upper nibble 0x3, En=1
-  PORTD &= B11110111;       // 06. En=0. Command is sent on trailing edge of enable
-  _delay_us(150);           // 07. Wait >100us for command to process
-  PORTD |= B00111000;       // 08. Write upper nibble 0x3, En = 1
-  PORTD &= B11110111;       // 09. En=0. Command is sent on trailing edge of enable
-  _delay_us(150);           // 10. Wait >100us for command to process
-  PORTD &= B00000011;       // 11. Clear PORTD to overwrite next instruction in buffer
-  PORTD |= B00101000;       // 12. Write upper nibble 0x2, En = 1
-  PORTD &= B11110111;       // 13. En=0. Command is sent on trailing edge of enable
-  _delay_us(150);           // 14. Wait >100us for command to process
+  _delay_ms(100);           // 05. Wait >40ms for Led Vcc to rise to the correct voltage
+  PORTD |= B00110000;       // 06. Write upper nibble 0x3 to LCD buffer
+  PORTB |= B00010000;       // 07. En=1
+  PORTB &= B11101111;       // 08. En=0. Command is sent on trailing edge of enable
+  _delay_ms(5);             // 09. Wait >4.1ms for command to process
+  PORTB |= B00010000;       // 10. En=1 (NOTE: Upper nibble of PORTD is still 0x3, no need to rewrite, just send enable signal)
+  PORTB &= B11101111;       // 11. En=0. Command is sent on trailing edge of enable
+  _delay_us(150);           // 12. Wait >100us for command to process
+  PORTB |= B00010000;       // 13. En=1 (NOTE: Upper nibble of PORTD is still 0x3, no need to rewrite, just send enable signal)
+  PORTB &= B11101111;       // 14. En=0. Command is sent on trailing edge of enable
+  _delay_us(150);           // 15. Wait >100us for command to process
+  PORTD &= B00101111;       // 16. Write upper nibble 0x2 to LCD buffer (NOTE: it was already 0x3, just clear bit 4 instead of clearing the whole thing and rewriting)
+  PORTB |= B00010000;       // 17. En=1
+  PORTB &= B11101111;       // 18. En=0. Command is sent on trailing edge of enable
+  _delay_us(150);           // 19. Wait >100us for command to process
   // At this point LCD is reset and listening for 4-bit commands.
+  // NOTE: PORTD buffer is still set to 0x2, must be cleared before it can be used correctly again
 }
 
 void LCDwriteCMD(byte CMD)                // Write a command byte to the LCD one nibble at a time using 4 bit mode.
 {
   byte upperNibble = CMD & 0xF0;          // 01. Mask upper nibble of CMD, clear lower nibble so result takes the form: 0xUUUU0000
   byte lowerNibble = (CMD & 0x0F) << 4;   // 02. Mask lower nibble of CMD, clear upper nibble then shift left 4 so result takes the form 0xLLLL0000
-  PORTD &= B00000011;                     // 03. Clear LCD buffer, enable, and register select
-  PORTD |= upperNibble;                   // 04. Write upperNibble to LCD buffer
-  PORTD |= B00001000;                     // 05. En=1, RS = 0
-  PORTD &= B11110111;                     // 06. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 07. Wait >40us for command to process
-  PORTD &= B00000011;                     // 08. Clear LCD buffer, enable, and register select
-  PORTD |= lowerNibble;                   // 09. Write lowerNibble to LCD buffer
-  PORTD |= B00001000;                     // 10. En=1, RS = 0
-  PORTD &= B11110111;                     // 11. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 12. Wait >40us for command to process
+  PORTB &= B11110111;                     // 03. Rs = 0 for all writes in this function since we are writing instructions not data
+  PORTD &= B00001111;                     // 04. Clear LCD buffer
+  PORTD |= upperNibble;                   // 05. Write upperNibble to LCD buffer
+  PORTB |= B00010000;                     // 06. En=1
+  PORTB &= B11101111;                     // 07. En=0. Command is sent on trailing edge of enable
+  _delay_us(1600);                        // 08. Wait >40us for command to process
+  PORTD &= B00001111;                     // 09. Clear LCD buffer
+  PORTD |= lowerNibble;                   // 10. Write lowerNibble to LCD buffer
+  PORTB |= B00010000;                     // 11. En=1
+  PORTB &= B11101111;                     // 12. En=0. Command is sent on trailing edge of enable
+  _delay_us(1600);                        // 13. Wait >40us for command to process
 }
-
 
 void LCDwriteDAT(byte DAT)                // Write a data byte to the LCD one nibble at a time using 4 bit mode.
 {
   byte upperNibble = DAT & 0xF0;          // 01. Mask upper nibble of DAT, clear lower nibble so result takes the form: 0xUUUU0000
   byte lowerNibble = (DAT & 0x0F) << 4;   // 02. Mask lower nibble of DAT, clear upper nibble then shift left 4 so result takes the form 0xLLLL0000
-  PORTD &= B00000011;                     // 03. Clear LCD buffer, enable, and register select 
-  PORTD |= upperNibble;                   // 04. Write upperNibble to LCD buffer
-  PORTD |= B00001100;                     // 05. En=1, RS = 1
-  PORTD &= B11110111;                     // 06. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 07. Wait >40us for command to process
-  PORTD &= B00000011;                     // 08. Clear LCD buffer, enable, and register select
-  PORTD |= lowerNibble;                   // 09. Write lowerNibble to LCD buffer
-  PORTD |= B00001100;                     // 10. En=1, RS = 1
-  PORTD &= B11110111;                     // 11. En=0. Command is sent on trailing edge of enable
-  _delay_us(1600);                        // 12. Wait >40us for command to process
+  PORTB |= B00001000;                     // 03. Rs = 1 for all writes in this function since we are writing data not instructions
+  PORTD &= B00001111;                     // 04. Clear LCD buffer
+  PORTD |= upperNibble;                   // 05. Write upperNibble to LCD buffer
+  PORTB |= B00010000;                     // 06. En=1
+  PORTB &= B11101111;                     // 07. En=0. Command is sent on trailing edge of enable
+  _delay_us(1600);                        // 08. Wait >40us for command to process
+  PORTD &= B00001111;                     // 09. Clear LCD buffer
+  PORTD |= lowerNibble;                   // 10. Write lowerNibble to LCD buffer
+  PORTB |= B00010000;                     // 11. En=1
+  PORTB &= B11101111;                     // 12. En=0. Command is sent on trailing edge of enable
+  _delay_us(1600);                        // 13. Wait >40us for command to process
 }
