@@ -1,6 +1,6 @@
 /*=========================================== MOTOR TEST ===========================================
-  Using two switches, select up to two motors to control with a potentiometer and display current position
-  the current position (in percent 0-99) on a 7 segment display. Sound a buzzer when motors are
+  Using two switches, select up to two motors to control with a potentiometer and display
+  the current angle in degrees (0-180) on the LCD display. Sound a buzzer when motors are
   too close to max position, indicating that they might be strained.
 
   Use "switch...case" statements to implement system as a finite state maschine.
@@ -82,11 +82,12 @@
     "Cursor Home"         : 0x0000001X, where X = don't care. Returns cursor home and shifted display to original position
     "Entry mode"          : 0x000001CS, where C = cursor move (decrement vs increment), S = shift display (off vs on)
     "Cursor Control"      : 0x0001MDXX, where M = move (cursor move vs display move), D = direction (left vs right)
+    "DDRAM Address Set"   : 0x1AAAAAAA, where A = 7-bit DDRAM address
   --------------------------------------------------------------------------------------------------
 
   ------------------------------------------- TO DO ------------------------------------------------
   1. Print state to LCD (best way to buffer/refresh/print quickly?)
-  2. Interrupt driven FSM (Without reevaluating state every single loop)
+  2. Implement interrupts without library
   3. Port manipulation of Servos
   4. Add alarm for 180 degrees
 
@@ -109,7 +110,7 @@ const int POT = 5;                      // Map the potentiometer to Uno Analog p
 int potPos = 0;                         // Stores the position of the potentiometer
 volatile byte FSMstate = 0;             // Stores the state of the finite state machine, only need a byte so no need for a two byte int
 //String line1;
-//String line2;
+String line2;
 
 void setup() {
   // Servo Setup
@@ -142,18 +143,25 @@ void loop() {
   switch (FSMstate)
   {
     case 0:  // No motors
+      
       break;
 
     case 1:  // Small Servo only
       potPos = analogRead(POT);                   // read the value of the potentiometer (value between 0 and 1023)
       potPos = map(potPos, 0, 1023, 0, 180);      // scale it to use it with the servo (value between 0 and 180)
       small_servo.write(potPos);                  // sets the small servo position according to the scaled value
+      potPos = map(potPos, 0, 180, 0, 99);        // Remap pot position to a 0-99 scale for display
+      LCD4BitPrintLn(String(potPos));             // Print position to line 2
+      LCD4BitWriteByte(0, 0xC0);                  // Move cursor to the beginning of line 2 for next iteration
       break;
 
     case 2:  // Tall Servo only
       potPos = analogRead(POT);                   // read the value of the potentiometer (value between 0 and 1023)
       potPos = map(potPos, 0, 1023, 0, 180);      // scale it to use it with the servo (value between 0 and 180)
       tall_servo.write(potPos);                   // sets the tall servo position according to the scaled value
+      potPos = map(potPos, 0, 180, 0, 99);        // Remap pot position to a 0-99 scale for display
+      LCD4BitPrintLn(String(potPos));             // Print position to line 2
+      LCD4BitWriteByte(0, 0xC0);                  // Move cursor to the beginning of line 2 for next iteration
       break;
 
     case 3:  // Both servos
@@ -161,6 +169,9 @@ void loop() {
       potPos = map(potPos, 0, 1023, 0, 180);      // scale it to use it with the servo (value between 0 and 180)
       small_servo.write(potPos);                  // sets the small servo position according to the scaled value
       tall_servo.write(potPos);                   // sets the tall servo position according to the scaled value
+      potPos = map(potPos, 0, 180, 0, 99);        // Remap pot position to a 0-99 scale for display
+      LCD4BitPrintLn(String(potPos));             // Print position to line 2
+      LCD4BitWriteByte(0, 0xC0);                  // Move cursor to the beginning of line 2 for next iteration
       break;
   }
 }
@@ -174,13 +185,34 @@ void interruptServiceRoutine()
   //  4. Shift right two times to place the bits we care about in the LSB position (>> 2)
   //  5. FSMstate now holds an integer value between 0 and 3
   FSMstate = (~PIND & B00001100) >> 2;
+  LCD4BitWriteByte(0, 0x01);                // clear LCD so it can be overwritten
+  switch(FSMstate)
+  {
+    case 0:
+      LCD4BitPrintLn("No Motor Enabled");
+    break;
+
+    case 1: 
+      LCD4BitPrintLn("Motor 1:"); 
+    break;
+
+    case 2:
+      LCD4BitPrintLn("Motor 2:"); 
+    break;
+
+    case 3:
+      LCD4BitPrintLn("Both Motors:"); 
+    break;
+  }
+  LCD4BitWriteByte(0, 0xC0);      // Move cursor to line 2
+  
 }
 
 void LCD4BitPrintLn(String line)
 {
   for (int i = 0; line[i] != '\0'; i++) // For each element in the string up until '\0' (All strings end with '\0'):
     LCD4BitWriteByte(1, line[i]);       //    Write the character data byte to the LCD
-  LCD4BitWriteByte(0, 0x02);            // Send the cursor home command so next write can start at the beginning of the line
+  //LCD4BitWriteByte(0, 0x02);            // Send the cursor home command so next write can start at the beginning of the line
 }
 
 void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
@@ -190,7 +222,7 @@ void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
   LCD4BitWriteByte(0, 0x08);  // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
   LCD4BitWriteByte(0, 0x01);  // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
   LCD4BitWriteByte(0, 0x06);  // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
-  LCD4BitWriteByte(0, 0x0F);  // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
+  LCD4BitWriteByte(0, 0x0C);  // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
 }
 
 void LCDreset()         // Reset LCD into 4-bit mode. Only needs to be called once at start up.
