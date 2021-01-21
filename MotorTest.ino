@@ -1,24 +1,28 @@
-/*=========================================== MOTOR TEST ===========================================
-  Using two switches, select up to two motors to control with a potentiometer and display
-  the current angle in degrees (0-180) on the LCD display. Sound a buzzer when motors are
+/*====================================== MOTOR CONTROLLER ===========================================
+  Using two SPST switches, select up to two motors to control with a potentiometer and display
+  the current angle in percent on the LCD display. Sound a buzzer when motors are
   too close to max position, indicating that they might be strained.
 
-  Use "switch...case" statements to implement system as a finite state maschine.
+  Use "switch...case" statements to implement system as a finite state machine.
   Consider Switch 1 to be the LSB and Switch 2 to be the MSB
-  Switches = 0x0000, case 0: no motors are selected, potentiometer has no effect, screen displays "00"
-  Switches = 0x0001, case 1: Small servo is activated, deactivate other motors, move to position of potentiometer and display
-  Switches = 0x0010, case 2: Tall servo is activated, deactivate other motors, move to position of potentiometer and display
-  Switches = 0x0011, case 3: Both Small and Tall servos are activated, deactivate other motors, move to position of potentiometer and display
-
+  Switches = 0b00, case 0: no motors are selected, potentiometer has no effect, screen displays error message
+  Switches = 0b01, case 1: Small servo is activated, deactivate other motor, move to position of potentiometer and display angle
+  Switches = 0b10, case 2: Tall servo is activated, deactivate other motor, move to position of potentiometer and display angle
+  Switches = 0b11, case 3: Both Small and Tall servos are activated, move to position of potentiometer and display angle
+====================================================================================================
 
 
   ------------------------------------------ About PORT X -------------------------------------------
   Port manipulation allows for the simultaneous manipulation of digital pins. It is faster, but less readable and less transferrable.
-  There are three ports available PORT A (analog 0-5), PORT B (Digital 8-13), and PORTD (digital 0-7)
+  This is good for time critical embedded systems developed in the same environment and deployed to the same hardware.
+  I mostly used it in this project as an academic exercise to refresh on low level register manipulation.
+  In future projects I will likely use the Arduino libraries unless seriously constrained by the system timing requirements.
+  
+  There are three ports available on the ATmega328p: PORT A (analog 0-5), PORT B (Digital 8-13), and PORTD (digital 0-7)
   The LSB of each port corresponds to lowest controlled pin and MSB corresponds to the highest controlled pin. (e.g. PORTD LSB = pin0, MSB = pin7)
 
   Controlled by 3 registers:
-  -DDRX:  (R/W) Data direction register D which specifies whether the pins are INPUT (default, hi-z) or OUTPUT (low-z). Always set this reg first!
+  -DDRX:  (R/W) Data direction register X which specifies whether the pins are INPUT (default, hi-z) or OUTPUT (low-z). Always set this reg first!
           0 = input, 1 = output
           The low level equivalent of pinMode()
   -PORTX: (R/W) Uses internal pull-ups to set the logic state of pins HIGH or LOW.
@@ -34,7 +38,6 @@
   --------------------------------------------------------------------------------------------------
 
 
-
   ---------------------------------------- About Servos --------------------------------------------
   Standard hobbyist servos achieve approximately 180 degrees of motion unless specifically stated.
   They typically expect to see a pulse every 20ms (50Hz period) for historical reasons.
@@ -45,27 +48,27 @@
     1.5ms pulse -> 90 degrees
     2ms pulse -> 180 degrees
 
-  This project uses Motor Shield V1.2
+  This project uses the Adafruit Motor Shield V1.2
     "SER1" header -> PWM1B -> Controlled by Uno Pin 10
     "SERVO_2" header -> PWM1A -> Controlled Uno Pin 9
   --------------------------------------------------------------------------------------------------
 
+
   ------------------------------------- About Interrupts -------------------------------------------
   Arduino Uno only has interrupts on pins 2 (INT.0) & 3 (INT0.1)
   millis(), micros(), and delay() do not work in ISR. delayMicroseconds() will work
-  To share data between ISR and main declare global variables as volatile
+  To share data between ISR and main, declare global variables as volatile
 
-  For this porject:
-  Dipswitch 0 = pin 2 -> INT.0
-  Dipswitch 1 = pin 3 -> INT.1
+  For this project:
+  Dip switch 0 = pin 2 -> INT.0
+  Dip switch 1 = pin 3 -> INT.1
 
-
-  Note: ISR is a defined keyword do not use
+  Note: ISR is a defined keyword do not use to name the interrupt service routine
   --------------------------------------------------------------------------------------------------
 
 
   ------------------------------------------- About LCD --------------------------------------------
-  2x16 Character LCD.
+  Generic 2x16 Character LCD.
 
   For this project configure LCD in 4-bit mode using Port D
     Digital Pin 04 = D4               : LCD buffer LSB
@@ -85,17 +88,13 @@
     "DDRAM Address Set"   : 0x1AAAAAAA, where A = 7-bit DDRAM address
   --------------------------------------------------------------------------------------------------
 
+
   ------------------------------------------- TO DO ------------------------------------------------
-  1. Print state to LCD (best way to buffer/refresh/print quickly?)
-  2. Implement interrupts without library
-  3. Port manipulation of Servos
-  4. Add alarm for 180 degrees
-
-
-  BONUS
-    1. Replace pot with light sensor
-    2. Roll your own LCD lib
-    3. Roll your own servo lib
+  1. Why does the LCD glitch after several state changes? Is this a switch debounce issue? Maybe switch noise causes state change faster than LCD can print.
+  2. Change display from percent angle to angle in dregrees. Since updating the print function no longer need exactly two character wide display.
+  2. Implement interrupts without library. Mostly an academic exercise in microcontroller port manipulation.
+  3. Add alarm an for 0 and 180 degree extremes to avoid motor strain.
+  4. Export LCD functions to their own class and link that to this project. Mostly a C++ academic exercise.
   --------------------------------------------------------------------------------------------------
   ====================================================================================================*/
 
@@ -109,8 +108,6 @@ const int POT = 5;                      // Map the potentiometer to Uno Analog p
 // Declare Intermediate Variables
 int potPos = 0;                         // Stores the position of the potentiometer
 volatile byte FSMstate = 0;             // Stores the state of the finite state machine, only need a byte so no need for a two byte int
-//String line1;
-String line2;
 
 void setup() {
   // Servo Setup
@@ -127,6 +124,7 @@ void setup() {
   // LCD Setup
   LCDinit4bit();                        // Initialize LCD in 4-bit mode
 
+  // Interrupt setup
   attachInterrupt(digitalPinToInterrupt(2), interruptServiceRoutine, CHANGE);   // Attach interrupt to switch 1, trigger on any change, and call interruptServiceRoutine
   attachInterrupt(digitalPinToInterrupt(3), interruptServiceRoutine, CHANGE);   // Attach interrupt to switch 2, trigger on any change, and call interruptServiceRoutine
 
@@ -135,11 +133,11 @@ void setup() {
 
 
 void loop() {
-  // Switch to different cases based on the value of the current state (FSMstate)
-  // FSMstate = 0, case 0: no motors are selected, potentiometer has no effect, screen displays "--"
-  // FSMstate = 1, case 1: Small servo is activated, deactivate other motors, move to position of potentiometer and display angle
-  // FSMstate = 2, case 2: Tall servo is activated, deactivate other motors, move to position of potentiometer and display angle
-  // FSMstate = 3, case 3: Both Small and Tall servos are activated, deactivate other motors, move to position of potentiometer and display angle
+  // Switch to different cases based on the value of the current state (FSMstate). State change is triggered by interrupt configured to watch for changes in the DIP switches
+  // FSMstate = 0, case 0: Dip switches both at 0, no motors are selected, potentiometer has no effect, screen displays error message
+  // FSMstate = 1, case 1: Dip switch 1 at 1 and switch 2 at 0, Small servo is activated, deactivate other motor, move to position of potentiometer and display angle
+  // FSMstate = 2, case 2: Dip switch 1 at 0 and switch 2 at 1, Tall servo is activated, deactivate other motor, move to position of potentiometer and display angle
+  // FSMstate = 3, case 3: Dip switches both at 0, Both Small and Tall servos are activated, move to position of potentiometer and display angle
   switch (FSMstate)
   {
     case 0:  // No motors
@@ -176,8 +174,8 @@ void loop() {
   }
 }
 
-void interruptServiceRoutine()
-{
+// The ISR executes whenever there is a DIP switch change and prints the corresponding state label to the LCD
+void interruptServiceRoutine(){
   // Change state based on switch inputs
   //  1. Read Port D Pins (PIND)
   //  2. Invert them for active high logic (~)
@@ -185,8 +183,10 @@ void interruptServiceRoutine()
   //  4. Shift right two times to place the bits we care about in the LSB position (>> 2)
   //  5. FSMstate now holds an integer value between 0 and 3
   FSMstate = (~PIND & B00001100) >> 2;
-  LCD4BitWriteByte(0, 0x01);                // clear LCD so it can be overwritten
-  switch(FSMstate)
+  
+  LCD4BitWriteByte(0, 0x01);  // Clear LCD so it can be overwritten
+
+  switch(FSMstate)  // Write the appropriate state label to the LCD Line 1
   {
     case 0:
       LCD4BitPrintLn("No Motor Enabled");
@@ -204,25 +204,16 @@ void interruptServiceRoutine()
       LCD4BitPrintLn("Both Motors:"); 
     break;
   }
-  LCD4BitWriteByte(0, 0xC0);      // Move cursor to line 2
-  
+  LCD4BitWriteByte(0, 0xC0);  // Move cursor to line 2
+
+  // At this point, the state label has been printed to the LCD and the cursor moved to line 2,
+  // We are now ready to return to main where we will repeatedly print the potentiometer angle to line 2 until a change in the DIP switches is detected
 }
 
 void LCD4BitPrintLn(String line)
 {
-  for (int i = 0; line[i] != '\0'; i++) // For each element in the string up until '\0' (All strings end with '\0'):
-    LCD4BitWriteByte(1, line[i]);       //    Write the character data byte to the LCD
-  //LCD4BitWriteByte(0, 0x02);            // Send the cursor home command so next write can start at the beginning of the line
-}
-
-void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
-{
-  LCDreset();                 // 1. Reset LCD into 4-bit mode
-  LCD4BitWriteByte(0, 0x28);  // 2. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
-  LCD4BitWriteByte(0, 0x08);  // 3. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
-  LCD4BitWriteByte(0, 0x01);  // 4. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
-  LCD4BitWriteByte(0, 0x06);  // 5. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
-  LCD4BitWriteByte(0, 0x0C);  // 6. Configure "Display Control" Register      : Enable screen, cursor, and blink
+  for (int i = 0; line[i] != '\0'; i++)   // For each element in the string up until '\0' (All strings end with '\0'):
+    LCD4BitWriteByte(1, line[i]);         //    Write the character data byte to the LCD
 }
 
 void LCDreset()         // Reset LCD into 4-bit mode. Only needs to be called once at start up.
@@ -250,6 +241,16 @@ void LCDreset()         // Reset LCD into 4-bit mode. Only needs to be called on
   PORTB &= B11101111;   // 18. En=0. Command is sent on trailing edge of enable
   _delay_us(150);       // 19. Wait >100us for command to process
   // At this point LCD is reset and listening for 4-bit commands.
+}
+
+ void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
+{
+  LCDreset();                 // 01. Reset LCD into 4-bit mode
+  LCD4BitWriteByte(0, 0x28);  // 02. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
+  LCD4BitWriteByte(0, 0x08);  // 03. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
+  LCD4BitWriteByte(0, 0x01);  // 04. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
+  LCD4BitWriteByte(0, 0x06);  // 05. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
+  LCD4BitWriteByte(0, 0x0C);  // 06. Configure "Display Control" Register      : Enable screen, cursor, and blink
 }
 
 void LCD4BitWriteByte(bool RS, byte BITE) // Write either a command (Rs=0) or data (Rs=1) byte to the LCD one nibble at a time using 4 bit mode.
