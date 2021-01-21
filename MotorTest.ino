@@ -93,7 +93,7 @@
   1. Why does the LCD glitch after several state changes? Is this a switch debounce issue? Maybe switch noise causes state change faster than LCD can print.
   2. Change display from percent angle to angle in dregrees. Since updating the print function no longer need exactly two character wide display.
   2. Implement interrupts without library. Mostly an academic exercise in microcontroller port manipulation.
-  3. Add alarm an for 0 and 180 degree extremes to avoid motor strain.
+  3. Add an alarm for less than 15 degree and greater than 165 degree to avoid motor strain at extremes.
   4. Export LCD functions to their own class and link that to this project. Mostly a C++ academic exercise.
   --------------------------------------------------------------------------------------------------
   ====================================================================================================*/
