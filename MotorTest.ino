@@ -128,7 +128,7 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(2), interruptServiceRoutine, CHANGE);   // Attach interrupt to switch 1, trigger on any change, and call interruptServiceRoutine
   attachInterrupt(digitalPinToInterrupt(3), interruptServiceRoutine, CHANGE);   // Attach interrupt to switch 2, trigger on any change, and call interruptServiceRoutine
 
-  //Serial.begin(9600);                 // For testing purposes
+  Serial.begin(9600);                 // For testing purposes
 }
 
 
@@ -210,10 +210,14 @@ void interruptServiceRoutine(){
   // We are now ready to return to main where we will repeatedly print the potentiometer angle to line 2 until a change in the DIP switches is detected
 }
 
-void LCD4BitPrintLn(String line)
+ void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
 {
-  for (int i = 0; line[i] != '\0'; i++)   // For each element in the string up until '\0' (All strings end with '\0'):
-    LCD4BitWriteByte(1, line[i]);         //    Write the character data byte to the LCD
+  LCDreset();                 // 01. Reset LCD into 4-bit mode
+  LCD4BitWriteByte(0, 0x28);  // 02. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
+  LCD4BitWriteByte(0, 0x08);  // 03. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
+  LCD4BitWriteByte(0, 0x01);  // 04. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
+  LCD4BitWriteByte(0, 0x06);  // 05. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
+  LCD4BitWriteByte(0, 0x0C);  // 06. Configure "Display Control" Register      : Enable screen, cursor, and blink
 }
 
 void LCDreset()         // Reset LCD into 4-bit mode. Only needs to be called once at start up.
@@ -243,16 +247,6 @@ void LCDreset()         // Reset LCD into 4-bit mode. Only needs to be called on
   // At this point LCD is reset and listening for 4-bit commands.
 }
 
- void LCDinit4bit()            // Initialize the LCD screen in 4-bit mode
-{
-  LCDreset();                 // 01. Reset LCD into 4-bit mode
-  LCD4BitWriteByte(0, 0x28);  // 02. Configure "Function Set" Register (0x28)  : 4 bit mode, 2 lines, and 5x7 dots
-  LCD4BitWriteByte(0, 0x08);  // 03. Turn off all "Display Control" (0x08)     : Display, cursor, and blink all off
-  LCD4BitWriteByte(0, 0x01);  // 04. "Display clear" command (0x01)            : Clears the display and returns the cursor to address 0
-  LCD4BitWriteByte(0, 0x06);  // 05. Configure "Entry Mode" Register (0x06)    : Sets auto increment cursor and disables display shift
-  LCD4BitWriteByte(0, 0x0C);  // 06. Configure "Display Control" Register      : Enable screen, cursor, and blink
-}
-
 void LCD4BitWriteByte(bool RS, byte BITE) // Write either a command (Rs=0) or data (Rs=1) byte to the LCD one nibble at a time using 4 bit mode.
 {
   byte upperNibble = BITE & 0xF0;         // 01. Mask upper nibble of BITE, clear lower nibble so result takes the form: 0xUUUU0000
@@ -271,4 +265,10 @@ void LCD4BitWriteByte(bool RS, byte BITE) // Write either a command (Rs=0) or da
   PORTB |= B00010000;                     // 11. En=1
   PORTB &= B11101111;                     // 12. En=0. Command is sent on trailing edge of enable
   _delay_us(1600);                        // 13. Wait >40us for command to process
+}
+
+void LCD4BitPrintLn(String line)
+{
+  for (int i = 0; line[i] != '\0'; i++)   // For each element in the string up until '\0' (All strings end with '\0'):
+    LCD4BitWriteByte(1, line[i]);         //    Write the character data byte to the LCD
 }
